@@ -3,6 +3,7 @@
 DSH Web GUI 侧边栏底部的可展开面板 **黑盒/代审** + 模型工具 `audit_workspace`。按 P0–P7 记实例、指纹、可达面、缺陷、覆盖矩阵和点子；点子只跟当前会话走。每个已验证漏洞单独产出一份带 PoC/EXP 的 SRC 专项报告。
 
 包名：`dsh-lovelyaudit`  
+仓库：https://github.com/Tokeii0/dsh-lovelyaudit  
 形态：DSH **profile 组合包**（Host `index.js` + Client `client.js` + `cordis.patch.yml`），不是动态 `cordis_define` 插件。
 
 ## 别人怎么装
@@ -82,8 +83,8 @@ npm pack
 发 Git 仓库时，对方可以：
 
 ```bat
-git clone <你的仓库>
-dsh plugin --profile web add <克隆出来的 plugins\audit-workspace>
+git clone https://github.com/Tokeii0/dsh-lovelyaudit.git
+dsh plugin --profile web add .\dsh-lovelyaudit
 ```
 
 然后同样改 `bundles` 并重启。
