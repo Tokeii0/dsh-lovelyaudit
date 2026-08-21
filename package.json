@@ -1,0 +1,33 @@
+{
+  "name": "dsh-lovelyaudit",
+  "version": "0.1.0",
+  "description": "DSH web profile bundle: 黑盒/代审 sidebar workspace (P0–P7, per-finding SRC reports).",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
