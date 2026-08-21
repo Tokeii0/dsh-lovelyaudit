@@ -16,6 +16,7 @@ import { extractReportFromEvent, extractReportFromParentRelay, extractReportFrom
 import { kitPromptText, listKit, pickNativeDirectory, runKitTool } from './lib/kit.js'
 import { outputPromptText, writeFindingOutput } from './lib/output.js'
 import { UNKNOWN_VULN_KICKOFF, UNKNOWN_VULN_SYSTEM } from './lib/unknown-vuln.js'
+import { registerBundledSkills } from './lib/skills.js'
 
 export const name = 'lovelyaudit'
 export const inject = ['tools', 'systemPrompt']
@@ -36,7 +37,7 @@ const PROMPT_TEXT = [
   UNKNOWN_VULN_SYSTEM,
   'Red lines are whatever the human wrote in P0. If they left redlines empty, do not invent a default read-only policy. Stay inside the authorized target and do not send secrets to third-party sites.',
   'Use provided credentials/headers only against the authorized target.',
-  'Load skills audit-methodology, blackbox-testing, code-audit, vuln-coverage, unknown-vuln, audit-ideas when the matching stage starts.',
+  'Load skills audit-methodology, blackbox-testing, code-audit, vuln-coverage, unknown-vuln, audit-ideas, audit-commands when the matching stage starts.',
   'Throughout P1–P7 you MAY and SHOULD call subagent / subagent_fork for parallel probes, recon, and write-ups. Those children can talk back with report; read their reports and fold results into audit_workspace. Do not spawn more live children than the Settings cap.',
   'Subagent model, concurrency cap, the callable tools folder, and SOCKS5/HTTP proxy are set in Settings → 黑盒/代审. Prefer audit_kit to list/run scripts in that folder. If a proxy is configured, all probes must use it.',
 ].join('\n')
@@ -127,6 +128,7 @@ function kickoffPrompt(workspace, kitText = '', proxyText = '', outputText = '')
 }
 
 export function apply(ctx) {
+  registerBundledSkills(ctx)
   const workspaces = new Map()
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
   const ledgersDir = storeDir(home)
