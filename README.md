@@ -15,3 +15,6 @@ dsh plugin --profile web add https://github.com/Tokeii0/dsh-lovelyaudit/releases
 ## 使用
 
 配置页填目标 URL，可选账号、Header、红线、CTF / Goal，点开始。进度看「目标」，漏洞看「漏洞」。
+
+
+<img width="985" height="965" alt="image" src="https://github.com/user-attachments/assets/44b35cd8-64dd-47d4-bedb-a4a54eb96b95" />
