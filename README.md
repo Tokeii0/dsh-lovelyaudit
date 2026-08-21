@@ -8,23 +8,9 @@ DSH 侧边栏 **黑盒/代审**：P0–P7 测绘、点子、漏洞专项报告�
 dsh plugin --profile web add https://github.com/Tokeii0/dsh-lovelyaudit/releases/latest/download/dsh-lovelyaudit-0.1.0.tgz
 ```
 
-然后编辑 `%USERPROFILE%\.dsh\profiles\web\package.json`，把包名加进 `bundles`：
+装完重启 DSH。侧边栏底部出现 **黑盒/代审** 即成功。
 
-```json
-{
-  "dsh": {
-    "profile": {
-      "bundles": [
-        "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "dsh-lovelyaudit"
-      ]
-    }
-  }
-}
-```
-
-重启 DSH。侧边栏底部出现 **黑盒/代审** 即成功。
+`dsh plugin add` 会自动把本包写进 web profile 的 `bundles`，不用手改 `package.json`。
 
 ## 使用
 
