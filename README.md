@@ -5,12 +5,23 @@ DSH 侧边栏 **黑盒/代审**：P0–P7 测绘、点子、漏洞专项报告�
 ## 安装
 
 ```bat
-dsh plugin --profile web add https://github.com/Tokeii0/dsh-lovelyaudit/releases/latest/download/dsh-lovelyaudit-0.1.0.tgz
+dsh plugin --profile web add https://github.com/Tokeii0/dsh-lovelyaudit/releases/latest/download/dsh-lovelyaudit.tgz
 ```
 
 装完重启 DSH。侧边栏底部出现 **黑盒/代审** 即成功。
 
 `dsh plugin add` 会自动把本包写进 web profile 的 `bundles`，不用手改 `package.json`。
+
+## 更新
+
+先卸载旧版再装最新版（URL 不变，始终指向最新 Release）：
+
+```bat
+dsh plugin --profile web remove dsh-lovelyaudit
+dsh plugin --profile web add https://github.com/Tokeii0/dsh-lovelyaudit/releases/latest/download/dsh-lovelyaudit.tgz
+```
+
+重启 DSH 生效。目标台账、漏洞、设置都不受影响（存在 `~/.dsh` 下，不在插件包里）。
 
 ## 使用
 

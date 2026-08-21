@@ -1043,23 +1043,17 @@ window.__ModuleLoader__.load({
         setPicking(kind)
         try {
           let path = ''
-          const workspaces = ctx && typeof ctx.get === 'function' ? ctx.get('workspaces') : null
-          if (workspaces && typeof workspaces.pickDirectory === 'function') {
-            const chosen = await workspaces.pickDirectory()
-            if (chosen) path = String(chosen)
-            else return
-          } else {
-            const res = await fetch('/local-audit-workspace', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ action: 'pick_directory' }),
-            })
-            const json = await res.json()
-            if (!res.ok) throw new Error(json.error || ('HTTP ' + String(res.status)))
-            if (json.cancelled) return
-            if (!json.ok || !json.path) throw new Error(json.error || '未选择文件夹')
-            path = json.path
-          }
+          const res = await fetch('/local-audit-workspace', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'pick_directory' }),
+          })
+          const json = await res.json()
+          if (!res.ok) throw new Error(json.error || ('HTTP ' + String(res.status)))
+          if (json.cancelled) return
+          if (!json.ok || !json.path) throw new Error(json.error || '未选择文件夹')
+          path = String(json.path).trim()
+          if (!path) throw new Error('选择器没有返回有效路径')
           if (kind === 'tools') {
             setToolsDraft(path)
             await save({ toolsDir: path })

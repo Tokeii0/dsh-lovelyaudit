@@ -15,6 +15,7 @@ import { childAgentOptions, DEFAULT_MAX_SUBAGENTS, isSubagentToolName, loadSetti
 import { extractReportFromEvent, extractReportFromParentRelay, extractReportFromSession, extractReportMarkdown, looksLikeFullReport, preferReportMarkdown, REPORT_OUTPUT_SCHEMA, reportWriterPrompt } from './lib/writer.js'
 import { kitPromptText, listKit, pickNativeDirectory, runKitTool } from './lib/kit.js'
 import { outputPromptText, writeFindingOutput } from './lib/output.js'
+import { UNKNOWN_VULN_KICKOFF, UNKNOWN_VULN_SYSTEM } from './lib/unknown-vuln.js'
 
 export const name = 'lovelyaudit'
 export const inject = ['tools', 'systemPrompt']
@@ -32,6 +33,7 @@ const PROMPT_TEXT = [
   'When auto-run or a goal is on, keep advancing the current phase until its goal is met, then set_phase to the next P-number. Spiral back if a new instance or boundary appears.',
   'Ideas are testable hypotheses for this session\'s target, not observations, and they are never shared across sessions. Failed ideas are valuable — record why. Respect skipped. Prefer high/low-cost pending ideas. Keep at most ~12 open ideas; add at most 2 per turn.',
   'Never claim unauthorized exploitability from white-box alone. Grade via P5: unauth / session / key / blocked / code.',
+  UNKNOWN_VULN_SYSTEM,
   'Red lines are whatever the human wrote in P0. If they left redlines empty, do not invent a default read-only policy. Stay inside the authorized target and do not send secrets to third-party sites.',
   'Use provided credentials/headers only against the authorized target.',
   'Load skills audit-methodology, blackbox-testing, code-audit, vuln-coverage, unknown-vuln, audit-ideas when the matching stage starts.',
@@ -114,6 +116,7 @@ function kickoffPrompt(workspace, kitText = '', proxyText = '', outputText = '')
       : 'P1：识别产品/版本/组件，拉 CVE 候选，写入 add_fingerprint。\nP2/P3：自己扫路径与鉴权边界，record_surface，不要等用户填表。\nP4–P6：代审、互证定级、最小非破坏证明。\nP7：按入口×类型填覆盖矩阵。漏洞一旦三点闭合上报，系统会立刻派撰写子代理为该条产出独立 SRC 报告，不必等到收工、也不要把多条漏洞写进同一份报告。',
     '每轮用 set_campaign / add_subgoal / update_subgoal 更新「目标」页。子目标编号用 P2.1、P2.2.3 这种层级；做完就把 status=done 销号（界面会划掉）。可用 parentId 挂在上一条下面。',
     'P1–P7 全过程都可派 subagent / subagent_fork，子代理用 report 把结论回传给你，你再写入 audit_workspace。写报告同样走子代理，不要自己长篇粘贴。',
+    UNKNOWN_VULN_KICKOFF,
     '上报漏洞纪律：verifyStatus=verified 必须同时有 rationale、reachable、evidence。缺一不可。禁止把白盒猜测写成未授权可打。update_finding 时把可复制的 poc（HTTP/curl）和 exp（或写清 PoC 已足够）写进台账，专项报告必须能按报告复现。',
     kitText,
     proxyText,

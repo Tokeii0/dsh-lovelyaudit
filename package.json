@@ -1,6 +1,6 @@
 {
   "name": "dsh-lovelyaudit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH web profile bundle: 黑盒/代审 sidebar workspace (P0–P7, per-finding SRC reports).",
   "license": "UNLICENSED",
   "private": true,
