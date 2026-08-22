@@ -14,7 +14,7 @@ dsh plugin --profile web add https://github.com/Tokeii0/dsh-lovelyaudit/releases
 
 ## 更新
 
-先卸载旧版再装最新版（URL 不变，始终指向最新 Release）：
+先卸载旧版再装最新版：
 
 ```bat
 dsh plugin --profile web remove dsh-lovelyaudit
