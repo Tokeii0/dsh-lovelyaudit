@@ -40,10 +40,16 @@ window.__ModuleLoader__.load({
       '.aw-form{display:flex;flex-direction:column;gap:6px}',
       '.aw-form input,.aw-form select,.aw-form textarea{width:100%;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);border-radius:8px;padding:7px 8px;font:inherit}',
       '.aw-form textarea{min-height:56px;resize:vertical}',
-      '.aw-btn{appearance:none;border:0;border-radius:8px;padding:7px 10px;cursor:pointer;background:var(--dsw-alias-brand-primary);color:#fff;font:inherit;font-weight:600}',
+      '.aw-btn{appearance:none;border:0;border-radius:8px;padding:7px 10px;cursor:pointer;background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary));color:var(--dsw-alias-label-primary-inverted);font:inherit;font-weight:600}',
+      '.aw-btn:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary))}',
       '.aw-btn:disabled{opacity:.5;cursor:not-allowed}',
       '.aw-btn.ghost{background:transparent;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l1)}',
+      '.aw-btn.ghost:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}',
       '.aw-btn.warn{background:transparent;color:var(--dsw-alias-state-error-primary);border:1px solid var(--dsw-alias-state-error-primary)}',
+      '.aw-btn.warn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger,var(--dsw-alias-interactive-bg-hover))}',
+      /* Every control in this panel is appearance:none / border:0, which removes the UA focus
+         ring. Without this rule keyboard users get no visible focus anywhere. */
+      '.aw-btn:focus-visible,.aw-board:focus-visible,.aw-phase:focus-visible,.aw-browse-row:focus-visible,.aw-trigger:focus-visible,.aw-check:focus-visible,.aw-form input:focus-visible,.aw-form select:focus-visible,.aw-form textarea:focus-visible,.aw-set-row input:focus-visible,.aw-set-row select:focus-visible,.aw-set-path input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       '.aw-actions{display:flex;gap:6px;flex-wrap:wrap}',
       '.aw-table{width:100%;border-collapse:collapse}',
       '.aw-table th,.aw-table td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--dsw-alias-border-l1);vertical-align:top}',
@@ -55,9 +61,16 @@ window.__ModuleLoader__.load({
       '.aw-idea.failed{border-color:var(--dsw-alias-state-error-primary)}',
       '.aw-idea.testing{border-color:var(--dsw-alias-state-warn-primary)}',
       '.aw-idea.skipped{opacity:.6}',
-      '.aw-matrix{overflow:auto}',
-      '.aw-matrix table{border-collapse:collapse;min-width:100%}',
-      '.aw-matrix th,.aw-matrix td{border:1px solid var(--dsw-alias-border-l1);padding:4px 6px;text-align:center;font-size:11px}',
+      /* 14 type columns scroll horizontally, so the header row and the entry column must
+         stay pinned or the reader loses track of which cell they are looking at.
+         border-collapse:separate is required — collapsed borders drop out of sticky cells. */
+      '.aw-matrix{overflow:auto;max-height:min(52vh,380px)}',
+      '.aw-matrix table{border-collapse:separate;border-spacing:0;min-width:100%}',
+      '.aw-matrix th,.aw-matrix td{border-right:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1);padding:4px 6px;text-align:center;font-size:11px;line-height:1.3}',
+      '.aw-matrix tr > :first-child{border-left:1px solid var(--dsw-alias-border-l1)}',
+      '.aw-matrix thead th{position:sticky;top:0;z-index:2;background:var(--dsw-alias-bg-layer-1);border-top:1px solid var(--dsw-alias-border-l1)}',
+      '.aw-matrix tbody td:first-child{position:sticky;left:0;z-index:1;background:var(--dsw-alias-bg-layer-1);text-align:left;white-space:nowrap}',
+      '.aw-matrix thead th:first-child{left:0;z-index:3;text-align:left}',
       '.aw-cell{width:22px;height:22px;border-radius:4px;border:1px solid var(--dsw-alias-border-l1);background:transparent}',
       '.aw-cell.clean{background:var(--dsw-alias-state-success-primary)}',
       '.aw-cell.hit{background:var(--dsw-alias-state-error-primary)}',
@@ -100,6 +113,9 @@ window.__ModuleLoader__.load({
       '.aw-flower{display:inline-flex;transform-origin:50% 50%}',
       '.aw-flower.spin{animation:aw-spin 4.8s linear infinite}',
       '.aw-flower.spin-fast{animation:aw-spin 1.2s linear infinite}',
+      /* The audit runs for hours, so this spinner is on-screen the whole time. Honor the
+         viewer's reduced-motion preference instead of rotating indefinitely. */
+      '@media (prefers-reduced-motion:reduce){.aw-flower.spin,.aw-flower.spin-fast{animation:none}}',
       '.aw-set-meta{font-size:12px;color:var(--dsw-alias-label-tertiary)}',
       '.aw-now{padding:12px;border-radius:12px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;gap:8px}',
       '.aw-now .lbl{font-size:11px;letter-spacing:.04em;color:var(--dsw-alias-label-tertiary);text-transform:uppercase}',

@@ -13,7 +13,7 @@ import { flushSaves, loadWorkspaceFile, scheduleSave, storeDir } from './lib/sto
 import { harvestAfterTurn, remindIdeas } from './lib/ideas.js'
 import { childAgentOptions, DEFAULT_MAX_SUBAGENTS, isSubagentToolName, loadSettingsFile, MAX_MAX_SUBAGENTS, MIN_MAX_SUBAGENTS, proxyEnv, proxyPromptText, saveSettingsFile, SETTINGS_NS } from './lib/settings.js'
 import { extractReportFromEvent, extractReportFromParentRelay, extractReportFromSession, extractReportMarkdown, looksLikeFullReport, preferReportMarkdown, REPORT_OUTPUT_SCHEMA, reportWriterPrompt } from './lib/writer.js'
-import { kitPromptText, listKit, pickNativeDirectory, runKitTool } from './lib/kit.js'
+import { killKitChildren, kitPromptText, listKit, pickNativeDirectory, runKitTool } from './lib/kit.js'
 import { outputPromptText, writeFindingOutput } from './lib/output.js'
 import { UNKNOWN_VULN_KICKOFF, UNKNOWN_VULN_SYSTEM } from './lib/unknown-vuln.js'
 import { registerBundledSkills } from './lib/skills.js'
@@ -37,7 +37,11 @@ const PROMPT_TEXT = [
   UNKNOWN_VULN_SYSTEM,
   'Red lines are whatever the human wrote in P0. If they left redlines empty, do not invent a default read-only policy. Stay inside the authorized target and do not send secrets to third-party sites.',
   'Use provided credentials/headers only against the authorized target.',
-  'Load skills audit-methodology, blackbox-testing, code-audit, vuln-coverage, unknown-vuln, audit-ideas, audit-commands when the matching stage starts.',
+  'Load skills audit-methodology, blackbox-testing, code-audit, vuln-coverage, unknown-vuln, audit-ideas, audit-commands when the matching stage starts. audit-methodology carries a skill routing table — read it first when unsure which to load.',
+  'Also load, whenever the target calls for it: language-stack-audit once the stack is identified (PHP/Python/Node/Go/.NET/Ruby/Java/C-C++ each have their own sinks and language-level traps — running Java-only grep patterns against a mixed-stack target is systematic under-reporting); auth-authz-testing for any auth/session/JWT/OAuth/SAML/IDOR/multi-tenant work (the coverage matrix has no auth column, so an empty cell will never force it); modern-attack-surface for API/GraphQL/WebSocket/CORS/HTTP-protocol/cloud/container/non-HTTP-service/supply-chain/LLM surfaces; audit-reporting whenever grading a finding or writing a report.',
+  'Identify WAF/RASP during P1 before any injection probing. Unrecognized WAF is the top source of false negatives — blocked probes get misread as "no vulnerability". A WAF-blocked defect grades as blocked, never as absent.',
+  'Before marking any finding verified, try to falsify it first: run the paired control request, rule out the mundane explanation (uniform error page, random-token jitter, any-malformed-input-500, WAF interception), and check the reverse prediction. A single response with no control proves nothing.',
+  'If you find a pre-existing WebShell, backdoor, or evidence of an actual intrusion that is not yours, stop probing that path immediately, preserve evidence, and tell the user. Do not go deeper and do not clean anything up.',
   'Throughout P1–P7 you MAY and SHOULD call subagent / subagent_fork for parallel probes, recon, and write-ups. Those children can talk back with report; read their reports and fold results into audit_workspace. Do not spawn more live children than the Settings cap.',
   'Subagent model, concurrency cap, the callable tools folder, and SOCKS5/HTTP proxy are set in Settings → 黑盒/代审. Prefer audit_kit to list/run scripts in that folder. If a proxy is configured, all probes must use it.',
 ].join('\n')
@@ -110,7 +114,7 @@ function kickoffPrompt(workspace, kitText = '', proxyText = '', outputText = '')
         : `已勾选 Goal 长跑（${workspace.maxGoalRounds ? '最多 ' + workspace.maxGoalRounds + ' 轮' : '不限轮数'}）。漏洞探索是长期过程：每轮结束不要宣告完工，除非 P7 覆盖矩阵已无空格。用 create_goal / get_goal 维持目标；阶段完成只 set_phase，不要 complete 整个审计。`)
       : '未勾选 Goal：本轮尽量把当前阶段做完并 set_phase；用户可随时再开。',
     `当前阶段：${phase.id} ${phase.name} — ${phase.goal}`,
-    `技能：先 load_skill ${phase.skill} 与 audit-ideas。`,
+    `技能：先 load_skill ${(phase.skills || [phase.skill]).join(' / ')} 与 audit-ideas。不确定该用哪个时看 audit-methodology 顶部的 skill 路由表。技术栈一旦确认（PHP/Python/Node/Go/.NET/Ruby/Java/C），必须挂上 language-stack-audit 的对应小节——只用一套语言的 grep 打混栈目标是系统性漏报。`,
     '工作方式：看系统提示里的「本轮只打」那 1 条 → 实际探测 → 立刻 record_surface / add_fingerprint → update_idea。不要并行打完整板。疑点先 draft，三点闭合后再 verified。',
     workspace.ctfMode
       ? 'P1：看题面/源码注释/备份包，判断 web/misc 题型。P2/P3：打入口拿 flag。P6：flag 原文作为 evidence 上报。不必走完企业 P7 矩阵。'
@@ -128,7 +132,19 @@ function kickoffPrompt(workspace, kitText = '', proxyText = '', outputText = '')
 }
 
 export function apply(ctx) {
-  registerBundledSkills(ctx)
+  // `skills` is not in `inject`, so it may not exist yet when this plugin activates.
+  // Registering directly would silently hit the "skills service unavailable" branch and
+  // drop every bundled skill. Defer to the seam the same way subagents/commands/webServer do.
+  ctx.inject(['skills'], (scope) => {
+    const result = registerBundledSkills(scope)
+    if (result.error) {
+      scope.logger && scope.logger.warn && scope.logger.warn(`lovelyaudit skills: ${result.error}`)
+    } else if (result.registered === 0) {
+      scope.logger && scope.logger.warn && scope.logger.warn('lovelyaudit skills: 未注册任何 skill（skills 目录为空或全部解析失败）')
+    } else {
+      scope.logger && scope.logger.info && scope.logger.info(`lovelyaudit skills: 已注册 ${result.registered} 个`)
+    }
+  })
   const workspaces = new Map()
   const home = process.env.DSH_HOME || join(homedir(), '.dsh')
   const ledgersDir = storeDir(home)
@@ -194,7 +210,12 @@ export function apply(ctx) {
     if (!hit) return
     finishReport(hit.workspace, hit.finding, markdown, { childId, reason: hit.finding.reportJob.reason, findingId: hit.finding.id })
   }
-  ctx.effect(() => () => { flushSaves(ledgersDir) })
+  // Teardown must reach quiescence: flush pending ledger writes AND kill any kit tool
+  // still running, so a hung scanner does not outlive the plugin.
+  ctx.effect(() => () => {
+    flushSaves(ledgersDir)
+    killKitChildren()
+  })
   const settingsPath = join(home, 'local-audit-workspace.json')
   let settings = loadSettingsFile(settingsPath)
   const liveChildren = new Set()
@@ -546,11 +567,13 @@ export function apply(ctx) {
         verifyStatus: { type: 'string' },
         cwe: { type: 'string' },
         owasp: { type: 'string' },
-        location: { type: 'string' },
+        cvss: { type: 'string' },
         snippet: { type: 'string' },
         rationale: { type: 'string' },
         impact: { type: 'string' },
         fix: { type: 'string' },
+        variants: { type: 'string' },
+        rootCause: { type: 'string' },
         verifyMethod: { type: 'string' },
         verifyResult: { type: 'string' },
         poc: { type: 'string' },

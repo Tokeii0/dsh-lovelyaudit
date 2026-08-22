@@ -1,6 +1,6 @@
 ---
 name: code-audit
-description: 跨语言代码审计：取全源码、Source/Sink/Sanitizer 污点模型、逆向连线、配置与依赖。做 P4 白盒或已有源码/字节码时使用。
+description: 跨语言代码审计方法论：取全源码与反编译、Source/Sink/Sanitizer 污点模型、Sink 驱动逆向连线、逐类型全库扫、配置与依赖审计。做 P4 白盒、拿到源码或字节码、审 Java/PHP/Python/Node/Go/.NET/Ruby 任意语言项目时使用；语言专属陷阱另见 language-stack-audit。
 ---
 
 # 代码审计完整流程
@@ -21,6 +21,10 @@ description: 跨语言代码审计：取全源码、Source/Sink/Sanitizer 污点
 | Node | .js（压缩/混淆/打包） | Prettier 美化；source map 还原；`asar extract` |
 | Python | .pyc | decompyle3/uncompyle6 |
 | Go | 编译二进制 | 符号/字符串分析（strings、Ghidra），难还原 |
+| Ruby | .rb（一般不编译） | 直接读；`gem unpack` 拆 gem |
+| Rust | 编译二进制 | 符号/字符串分析；有源码优先审 `unsafe` |
+| C/C++ | 二进制/.so/.dll | Ghidra/IDA；有源码直接审内存安全 |
+| 移动端 | .apk / .ipa | `apktool` + `jadx`（Android）；`class-dump`/Hopper（iOS） |
 | 前端 | bundle.js | source map、webcrack、AST 反混淆 |
 
 ```bash
@@ -32,6 +36,19 @@ find . -name "*.jar" -o -name "*.rar" -o -name "*.zip" -o -name "*.bak"
 ```
 
 **关键纪律：取全，别漏。** 只反编译主包、漏掉 `lib/` 自研 jar、`.rar` 备份、`.class.bak` 是高频失误——硬编码口令常藏在不起眼的工具类里。**没反编译的，就是没审的。**
+
+**多语言项目要逐栈过。** 现实项目常是「主站 Java + 老模块 PHP + 前端 TS + 某个服务 Go + native 加密库 C」。先跑一遍栈盘点，每个栈都要按 `language-stack-audit` 的对应 references 文件配锚点：
+
+```bash
+ls package.json composer.json requirements.txt pyproject.toml go.mod pom.xml build.gradle \
+   Gemfile *.csproj Cargo.toml CMakeLists.txt 2>/dev/null
+find . -name "*.php" -o -name "*.py" -o -name "*.go" -o -name "*.rb" -o -name "*.cs" \
+     -o -name "*.java" -o -name "*.ts" | sed 's/.*\.//' | sort | uniq -c | sort -rn
+```
+
+**只用 Java 的 grep 模式去扫一个混栈项目，就是系统性漏报。**
+
+**版本控制历史也是源。** 有 `.git` 时：`git log -p` 找被删掉的密钥、`git stash list`、被 revert 的补丁（**revert 掉的安全修复 = 现存漏洞**）；补丁 diff 是 1-day 与变体的富矿（见 `unknown-vuln` 技术三）。
 
 ## W2 建立污点模型（Source / Sink / Sanitizer 三张全集表）
 
@@ -49,9 +66,15 @@ find . -name "*.jar" -o -name "*.rar" -o -name "*.zip" -o -name "*.bak"
 | 请求体/流 | getInputStream/getReader | `php://input`、`req.on('data')` |
 | 路径 | getPathInfo/getRequestURI | `$_SERVER['PATH_INFO']`、`req.path` |
 | 上传 | MultipartFile.getOriginalFilename | `$_FILES`、multer |
+| **框架自动绑定** | `@RequestBody Entity`、`@ModelAttribute` | Laravel `$request->all()`、Rails `params`、Django Form/Serializer、Gin `ShouldBind`、NestJS DTO、.NET Model Binding |
 | **二次污点** | **数据库回读值、缓存、文件内容、第三方回调** | 同 |
+| 非 HTTP 入口 | MQ 消息、定时任务读的文件、导入的 Excel/CSV/XML、WebSocket 消息、gRPC 请求、CLI 参数、环境变量 | 同 |
 
 **二次污点最易漏**：从 DB 读出的值再拼进 SQL/命令/HTML 同样是注入；存储型 XSS、二阶 SQLi 都属此类。**把「可被用户写入的持久化数据」也当 Source。**
+
+**框架自动绑定是被低估的 Source**：一次绑定就把请求体所有字段灌进实体——不给字段白名单就是 **Mass Assignment**（多传 `role`/`isAdmin`/`balance`）。各栈锚点见 `language-stack-audit`。
+
+**非 HTTP 入口同样是 Source**：只审 Controller 会漏掉「MQ 消费者 / 定时任务 / 文件导入 / 管理后台批量操作」这些路径——它们往往**因为"内部调用"而完全没做校验**。
 
 ### ② Sink 全集（危险操作汇聚点）
 
@@ -90,17 +113,32 @@ find . -name "*.jar" -o -name "*.rar" -o -name "*.zip" -o -name "*.bak"
 grep -rnE 'execute(Query|Update)\("[^"]*"\s*\+|createQuery\([^)]*\+' src --include="*.java"
 ```
 
-**自动化辅助但不能全信**：Fortify/Checkmarx/CodeQL/Semgrep/find-sec-bugs（Java）、Psalm/Phan（PHP）、Bandit（Python）、gosec（Go）。CodeQL/Semgrep 可写自定义 taint 规则。误报多、漏报也多（框架特有 Source、反射、动态派发）——**人工看逻辑，工具扫广度。**
+**自动化辅助但不能全信**：Fortify/Checkmarx/CodeQL/Semgrep/find-sec-bugs（Java）、Psalm/Phan（PHP）、Bandit（Python）、gosec（Go）、brakeman（Rails）、eslint-plugin-security（Node）、cargo-audit + clippy（Rust）。CodeQL/Semgrep 可写自定义 taint 规则。误报多、漏报也多——**人工看逻辑，工具扫广度。**
+
+**污点链断在哪里，漏洞就藏在哪里。** 工具和人都容易在这些地方跟丢：
+
+| 断链处 | 表现 | 对策 |
+|---|---|---|
+| **反射 / 动态派发** | `Method.invoke`、`Type.GetType(x)`、PHP `$$f()`/`call_user_func`、Python `getattr`、Ruby `send` | 手工连；同时**本身就是漏洞**（方法名可控 = 任意方法调用） |
+| **依赖注入 / AOP** | 接口调用看不到实现 | 按接口找全部实现类，逐个看 |
+| **配置驱动的分发** | XML/YAML/注解里配的处理器映射 | 从配置反查 |
+| **跨语言/跨进程** | Java 调 native、Node 调 Python 脚本、走 MQ/RPC | 两端都要审，Sink 在另一个仓库里 |
+| **模板/前端** | 后端只给数据，渲染在模板里 | 模板文件也要扫（未转义输出） |
+| **存储中转** | Source 写库 → 另一个模块读库 → Sink | 二次污点，靠字段名跨模块搜 |
+
+遇到断链**不要默认安全**——标记为「未追完」并在 P7 复查清单里留项。
 
 ## W4 逐类型全库扫（白盒兜底）
 
-对 `vuln-coverage` skill 里的**每一类漏洞**用固定模式扫全库，一类不落——这是纪律，不是灵感。顺序按后果严重度：
+对 `vuln-coverage` skill 里的**每一类漏洞**用固定模式扫全库，一类不落——这是纪律，不是灵感。**每一类都要同时用「通用锚点」和「本项目语言的专属锚点」（`language-stack-audit`）扫两遍。** 顺序按后果严重度：
 
-1. RCE 类：反序列化、命令注入、表达式注入、上传、SSTI
-2. 数据泄露类：SQLi、任意文件读、越权/IDOR、信息泄露
-3. 写入/破坏类：任意文件写/删、SSRF、XXE
-4. 客户端类：XSS、开放重定向、CSRF
-5. 密码学/配置类：硬编码密钥、弱加密、会话/传输配置
+1. RCE 类：反序列化、命令注入、表达式/模板注入、上传、文件包含（PHP）、JNDI/日志注入（Java）、解压与解析器
+2. 数据泄露类：SQLi/NoSQL、任意文件读、越权/IDOR/多租户、信息泄露
+3. 写入/破坏类：任意文件写/删、SSRF、XXE、Zip Slip
+4. 客户端类：XSS、开放重定向、CSRF、CORS、原型链污染
+5. 认证授权类：认证绕过、会话、JWT/OAuth、BFLA（→ `auth-authz-testing`）
+6. 密码学/配置类：硬编码密钥、弱加密、框架密钥泄露、会话/传输配置
+7. 并发类：竞态/TOCTOU（→ `unknown-vuln` 技术五）
 
 ## W5 配置审计（常被忽略、却是根因）
 
@@ -113,6 +151,12 @@ grep -rnE 'execute(Query|Update)\("[^"]*"\s*\+|createQuery\([^)]*\+' src --inclu
 | ORM 配置 | 数据源、方言、SQL 打印、二级缓存（硬编码数据源、SQL 明文入日志） |
 | 中间件 | 目录列表、脚本解析目录、错误页、Server 头（上传目录能否解析脚本） |
 | 密钥/凭据 | 硬编码口令/AK/SK、弱默认密钥 |
+| **框架主密钥** | Django `SECRET_KEY`、Flask `secret_key`、Laravel `APP_KEY`、Rails `secret_key_base`、.NET `MachineKey`、Spring 各类 secret——**泄露即会话伪造/反序列化/直接接管**，跨栈同构，价值极高 |
+| **调试模式** | `DEBUG=True`(Django)、`debug=true`(Flask/Spring)、`APP_DEBUG`、`customErrors=Off`(.NET)、`display_errors`(PHP)、`consider_all_requests_local`(Rails) —— 泄露堆栈、配置甚至可 RCE（Werkzeug 控制台） |
+| **CORS 与安全响应头** | `Allow-Origin` 是否反射/通配 + `Allow-Credentials`；CSP/HSTS/X-Frame-Options/X-Content-Type-Options 基线 |
+| **管理端点暴露** | actuator（尤其 `/env` `/heapdump` `/jolokia`）、druid、swagger、console、trace.axd/elmah.axd、`/debug/pprof`(Go)、Django admin |
+| **云与容器配置** | 云凭据文件与环境变量、K8s manifest 里的 secret、`docker-compose.yml` 明文口令、对象存储桶 ACL |
+| **CI/CD 配置** | `.github/workflows`、`.gitlab-ci.yml`、Jenkinsfile 里的凭据与不可信输入插值 |
 
 **读配置是理解「真实执行」的唯一途径。代码写了鉴权、配置没挂上，等于没有。注释掉的配置尤其要读——它揭示「本来该有什么防护，现在没了」。**
 
@@ -124,8 +168,10 @@ trivy fs --scanners vuln .   # 或 OWASP Dependency-Check / Snyk / grype
 ```
 
 1. **有 CVE ≠ 可利用**——看是否存在可达调用点（回到污点分析）。分「链路已确认」和「存在即风险」两级。
-2. 重点组件：序列化库（fastjson/Jackson/xstream）、日志库（log4j）、上传库、XML 库、模板引擎、Web 框架本身。
-3. **传递依赖**也要查。
+2. 重点组件：序列化库（fastjson/Jackson/xstream/pickle/PHP POP 链）、日志库（log4j）、上传库、XML/YAML 库、模板引擎、图片与文档解析器（ImageMagick/ffmpeg/PDF/Office——**解析器就是 RCE 面**）、压缩库、Web 框架本身。
+3. **传递依赖**也要查；无 lockfile / 版本范围过宽（`^` `*` `latest`）本身就是缺陷。
+4. **供应链视角**（不止查 CVE）：依赖混淆（私有包名在公共源可抢注）、registry 优先级配置、制品签名、`postinstall` 脚本、镜像层泄密、CI 里的凭据与不可信输入插值 → 见 `modern-attack-surface` M7。
+5. **自研"安全工具类"要单独审**：项目里那个 `SecurityUtil` / `Filter` / `XssUtil` 往往是黑名单实现，是全站防护的单点——**它一被绕，所有依赖它的地方同时失守**（这也是变体分析最高效的入口）。
 
 ## W7 逻辑与业务审计（通向未知漏洞）
 
@@ -138,8 +184,11 @@ trivy fs --scanners vuln .   # 或 OWASP Dependency-Check / Snyk / grype
 ## 白盒产出清单（交给 P5 互证）
 
 1. **缺陷清单**（未定级）：文件:行、Source、Sink、Sanitizer 评估、触发前置。
-2. **配置根因**（鉴权范围、注释掉的防护、硬编码凭据）。
-3. **依赖 CVE 清单**（分「链路已确认/存在即风险」）。
+2. **配置根因**（鉴权范围、注释掉的防护、硬编码凭据、框架主密钥、调试模式）。
+3. **依赖 CVE 清单**（分「链路已确认/存在即风险」）+ 供应链缺陷。
 4. **逻辑可疑点**（交 unknown-vuln 深挖）。
+5. **裸奔方法清单**（控制器方法全集 − 授权注解集，见 `auth-authz-testing` Z9）。
+6. **未追完的断链清单**（反射/跨进程/跨仓库处跟丢的污点）——**交 P7 复查，不能默认安全**。
+7. **技术栈盘点**：每个栈是否都按 `language-stack-audit` 对应 references 文件扫过。
 
 这些与黑盒可达面地图在 P5 互证叠加定级——**不要直接当黑盒结论**。

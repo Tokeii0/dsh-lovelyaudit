@@ -1,11 +1,18 @@
 ---
 name: audit-commands
-description: 审计工具与命令速查：反编译取源、指纹、路由提取、边界探测、逐类型 grep 模式库、注入探针、fuzz/并发、依赖 CVE 扫描。需要具体命令时使用。
+description: 审计工具与命令速查：反编译取源、指纹与 WAF 识别、路由提取、边界与信任头探测、逐类型 grep 模式库（多语言）、注入探针、CORS/JWT/GraphQL/云元数据、非 HTTP 服务、fuzz 与并发、依赖 CVE 扫描。需要具体命令、curl/grep 写法时使用。
 ---
 
 # 工具与命令速查
 
-可复制粘贴的命令库，按审计阶段组织。目标占位符统一 `TARGET`；示例默认 Java/JSP，附其他栈等价。
+可复制粘贴的命令库，按审计阶段组织。目标占位符统一 `TARGET`；示例默认 Java/JSP，附其他栈等价。**语言专属的完整锚点见 `language-stack-audit`——本篇只给跨栈通用与最高频的几条。**
+
+```bash
+# 0 先定栈：决定后面所有 grep 用哪套模式
+ls package.json composer.json requirements.txt pyproject.toml go.mod pom.xml build.gradle \
+   Gemfile *.csproj Cargo.toml CMakeLists.txt 2>/dev/null
+find . -type f -name "*.*" | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -20
+```
 
 ## 1 取源与反编译
 
@@ -37,6 +44,15 @@ curl -s "http://TARGET/login" | grep -noE "([0-9]{1,3}\.){3}[0-9]{1,3}(:[0-9]+)?
 # 端口发现（授权内）——同主机其他实例
 nmap -p- --min-rate 2000 TARGET
 
+# WAF 识别（做任何注入探测之前）——恶意 payload 与正常请求的差分
+for q in "hello" "<script>alert(1)</script>" "1'%20or%201=1--" "../../etc/passwd"; do
+  printf "%-32s " "${q:0:30}"
+  curl -s -o /dev/null -w "code=%{http_code} size=%{size_download} t=%{time_total}\n" "http://TARGET/?q=$q"
+done
+# 对照：不存在的路径也打恶意 payload —— 一样被拦 = 拦截在应用之前（网关型 WAF）
+curl -s -o /dev/null -w "nopath code=%{http_code}\n" "http://TARGET/nope999?q=<script>alert(1)</script>"
+wafw00f "http://TARGET/"   # 有工具时
+
 # 目录与残留
 ffuf -u "http://TARGET/FUZZ" -w wordlist.txt -mc 200,301,302,403
 for p in .git/HEAD .svn/entries WEB-INF/web.xml backup.zip .DS_Store swagger.json v2/api-docs; do
@@ -55,8 +71,18 @@ find . -name "*.jsp"
 # web.xml 的 servlet/filter 映射（含被注释的！）
 grep -nE "servlet-mapping|filter-mapping|url-pattern|<!--" WEB-INF/web.xml
 
-# 其他栈路由
-grep -rn "Route::\|app.get(\|@app.route\|router\." .
+# 其他栈路由（逐栈都要跑）
+grep -rn "Route::\|Route::group"            .    # Laravel
+grep -rn "@app.route\|urlpatterns\|path(\|re_path(" .   # Flask / Django
+grep -rn "app\.\(get\|post\|put\|delete\)(\|router\.\|@Controller\|@Get(\|@Post(" .  # Express / NestJS
+grep -rn "r\.\(GET\|POST\)\|http.HandleFunc\|mux.Handle" .   # Go
+grep -rn "resources :\|get '\|post '"       .    # Rails routes.rb
+grep -rn "\[Route(\|\[HttpGet\|\[HttpPost\|MapControllerRoute" .   # .NET
+
+# API 规格一次拿全端点（比爆破高效百倍）
+for p in swagger.json v2/api-docs v3/api-docs openapi.json api-docs actuator/mappings \
+         api/schema/ rails/info/routes api-json graphql; do
+  curl -s -o /dev/null -w "%{http_code} $p\n" "http://TARGET/$p"; done
 ```
 
 ## 4 黑盒可达性与边界探测
@@ -157,6 +183,88 @@ curl -s "http://TARGET/ping?host=127.0.0.1%3Bsleep%205" -o /dev/null -w "%{time_
 
 自动化：sqlmap（注入）、Burp（Intruder/Collaborator 带外）、nuclei（模板化已知漏洞）。生产环境控制强度、避免破坏性开关。
 
+## 6.5 认证 / 授权 / 令牌
+
+```bash
+# 角色矩阵：同一批端点用不同身份各打一遍（R0 游客 / R1 用户A / R2 用户B / R3 管理员）
+while read u; do
+  printf "%-40s " "$u"
+  curl -s -o /dev/null -w "R0=%{http_code} " "http://TARGET$u"
+  curl -s -o /dev/null -w "R1=%{http_code} " -b "$SESS_A" "http://TARGET$u"
+  curl -s -o /dev/null -w "R3=%{http_code}\n" -b "$SESS_ADMIN" "http://TARGET$u"
+done < endpoints.txt
+
+# 水平越权差分（A 的会话取 B 的资源，与 B 自己取做内容比对）
+curl -s -b "$SESS_A" "http://TARGET/api/order?id=$ID_B" -o a.txt
+curl -s -b "$SESS_B" "http://TARGET/api/order?id=$ID_B" -o b.txt
+diff a.txt b.txt && echo "IDOR: A 拿到了 B 的数据"
+
+# JWT 快速看载荷（不验签，只解码）
+echo "$JWT" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null; echo
+# JWT 工具：jwt_tool（alg:none / kid 注入 / jku / 离线弱密钥）
+jwt_tool "$JWT" -M pb              # playbook 扫
+jwt_tool "$JWT" -C -d wordlist.txt # 离线爆弱密钥（不打目标，不算在线爆破）
+# Flask session 伪造（拿到 secret_key 后）
+flask-unsign --decode --cookie "$COOKIE"
+
+# 白盒：身份来源可疑点（客户端传身份）——各栈
+grep -rniE 'getParameter\("(uid|userid|role|isadmin|orgid|tenantid)"' $SRC          # Java
+grep -rniE '\$_(GET|POST|REQUEST)\[.(uid|user_id|role|is_admin|tenant)' .           # PHP
+grep -rniE 'request\.(GET|POST|args|json)\[.(uid|user_id|role|tenant)' .            # Py
+grep -rniE 'req\.(query|body|params)\.(uid|userId|role|isAdmin|tenantId)' .         # Node
+# 裸奔方法清单 = 控制器方法全集 − 授权注解集
+grep -rn "@RequestMapping\|@GetMapping\|@PostMapping" $SRC > /tmp/all_ep.txt
+grep -rn "@PreAuthorize\|@RequiresPermissions\|@Secured\|@RolesAllowed" $SRC > /tmp/authz.txt
+# 少了租户条件的查询
+grep -rniE 'select .* from [a-z_]+ where' $SRC | grep -viE 'tenant|company|org|corp'
+```
+
+## 6.6 现代面：CORS / GraphQL / WebSocket / 云 / 非 HTTP
+
+```bash
+# CORS：反射 Origin + credentials = 成立
+for o in "https://evil.com" "null" "https://TARGET.evil.com"; do
+  printf "%-28s " "$o"
+  curl -s -o /dev/null -D- -H "Origin: $o" "http://TARGET/api/me" \
+    | grep -i "access-control-allow-\(origin\|credentials\)" | tr '\n' ' '; echo
+done
+
+# 安全响应头基线
+curl -s -D- -o /dev/null "http://TARGET/" | grep -iE \
+ "content-security-policy|strict-transport|x-frame|x-content-type|referrer-policy"
+
+# GraphQL introspection
+curl -s -X POST "http://TARGET/graphql" -H 'Content-Type: application/json' \
+  -d '{"query":"{__schema{types{name fields{name}}}}"}' | head -c 500
+
+# WebSocket：换 Origin 仍 101 = CSWSH 面
+curl -s -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==" -H "Origin: https://evil.com" \
+  -b "$SESS" "http://TARGET/ws" | head -1
+
+# Host 头攻击（看响应里的绝对 URL 是否跟着变）
+curl -s "http://TARGET/reset" -H "Host: evil.com"            | grep -o "https\?://[^\"' ]*" | head
+curl -s "http://TARGET/reset" -H "X-Forwarded-Host: evil.com" | grep -o "https\?://[^\"' ]*" | head
+
+# 云元数据（拿到 SSRF 后；也可经任意文件读拿凭据文件）
+# AWS 169.254.169.254/latest/meta-data/iam/security-credentials/
+# 阿里云 100.100.100.200/latest/meta-data/ram/security-credentials/
+# 文件读旁路：~/.aws/credentials  ~/.kube/config  /proc/self/environ
+
+# 非 HTTP 服务无认证判定（端口扫出来就要测，别只记录）
+redis-cli -h TARGET -p 6379 ping
+curl -s "http://TARGET:9200/_cat/indices"                 # Elasticsearch
+echo stat | nc TARGET 2181                                # Zookeeper
+curl -s "http://TARGET:2375/version"                      # Docker API
+curl -sk "https://TARGET:10250/pods" | head -c 200        # kubelet
+nmap -sV --script "*-info,*-empty-password" -p 6379,27017,9200,11211,2181,1099,20880 TARGET
+
+# 白盒：解压穿越 / 批量赋值 / 云凭据
+grep -rniE 'getName\(\)|extractall|extractTo|ZipEntry|TarEntry' . | grep -iE 'zip|tar|unzip'
+grep -rniE '@RequestBody|ShouldBind|params\.permit!|\$request->all\(\)|readValue\(.*\.class' .
+grep -rniE '(AKIA[0-9A-Z]{16}|LTAI[0-9A-Za-z]{12,}|aws_secret|BEGIN (RSA|EC|OPENSSH) PRIVATE)' .
+```
+
 ## 7 未知漏洞：Fuzz / 并发 / 差分
 
 ```bash
@@ -167,6 +275,9 @@ arjun -u "http://TARGET/api"
 
 # 并发竞态（突破"限一次"）
 seq 30 | xargs -P30 -I{} curl -s -b "SESSION=x" -X POST "http://TARGET/claim"
+# 打不中窗口时上单包攻击（把请求压进同一个 TCP 包，抖动降到亚毫秒）
+#   Turbo Intruder gate 模式 / Burp Repeater 分组「并行发送」/ HTTP2 多路复用
+# GraphQL 天然单包并发：一个请求里 N 个 alias mutation
 
 # 覆盖引导 fuzz（有源码/harness 时）
 # JVM: Jazzer  |  native: AFL++/libFuzzer  |  Go: go-fuzz  |  Python: Atheris
@@ -194,9 +305,19 @@ semgrep --config auto .
 codeql database create db --language=java && codeql database analyze db my-queries.ql
 ```
 
-## 附：非破坏红线（生产环境）
+## 附：强度分级参考（**不是默认红线**）
 
-- ✅ 只读探测、响应差分、时延判定、字节码分析、读无害文件。
-- ⚠️ 控制强度：盲注 sleep 时长要小、避免大量并发、不 --dump / 不 --os-shell。
-- ❌ 禁：写/删数据、真传 WebShell、爆破口令、DoS、越红线利用需要密钥的写通道。
-- 原则：**能用差分/时延/带外证明的，就不落地真实利用。** 用户 P0 红线优先。
+> ⚠️ **红线以用户在 P0 填写的为准。用户没填红线时，不要把下面这张表当默认禁令套上去**——按授权范围正常探测与复现即可。这张表只是「和用户确认红线时可以拿来对照的分级模板」，以及生产环境下的强度自律参考。
+
+| 强度 | 动作 |
+|---|---|
+| 最低 | 只读探测、响应差分、时延判定、带外确认、字节码分析、读无害文件（web.xml/配置） |
+| 中 | 盲注（短 sleep）、受控并发、默认口令试一次、任意文件读（节制隐私） |
+| 高 | 落地写入、真传 WebShell、大量并发、`--dump` / `--os-shell`、口令爆破、DoS |
+
+通用自律（与红线无关，任何授权下都值得遵守）：
+
+- **能用差分/时延/带外证明的，就不必落地真实利用**——证明缺陷存在是目的，打穿不是。
+- 触发 WAF 会产生告警与封禁，控制频率。
+- 碰到真实 PII 证明即止，不导出、不落盘，报告里脱敏（`audit-reporting` R5）。
+- 发现**他人植入**的 WebShell/后门/入侵痕迹：立即停手、保全证据、上报，不深入不清理。
