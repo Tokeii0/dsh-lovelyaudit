@@ -844,7 +844,7 @@ window.__ModuleLoader__.load({
 
       const findingCard = jsx.jsxs('div', { className: 'aw-card', children: [
         jsx.jsxs('h3', { children: [icon(ICONS.bug, 14), ' 缺陷（一条一份专项报告）'] }),
-        jsx.jsx('div', { className: 'aw-hint', children: '三点闭合上报后立刻为该条派撰写子代理，按护理到家 SRC 报告逻辑单独成篇，不与其它漏洞混写。' }),
+        jsx.jsx('div', { className: 'aw-hint', children: '三点闭合上报后立刻为该条派撰写子代理，按标准单条漏洞报告体例（SRC-nn）单独成篇，不与其它漏洞混写。' }),
         data.findings.length === 0
           ? jsx.jsx('div', { className: 'aw-empty', children: 'P4–P6 由 Agent 代审、互证、验证后登记。每条会问：可达吗？要什么前置？回显成立吗？' })
           : data.findings.map((f) => {
